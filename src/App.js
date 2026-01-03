@@ -49,6 +49,8 @@ import {
 // ==========================================
 // 🟢 Savings Together 設定
 // ==========================================
+// 修正：在瀏覽器環境直接使用字串，避免 process is not defined 錯誤
+// 若要使用環境變數，請確保你的建置工具 (如 webpack, vite) 有正確設定
 const firebaseConfig = {
   apiKey: "AIzaSyDQUadbp5fnScsgnsiNH4X0ztjyUBx31zU",
   authDomain: "savings-together-e9667.firebaseapp.com",
@@ -62,8 +64,11 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
+// 設定資料庫存取的路徑 ID
 const appId =
-  typeof __app_id !== "undefined" ? __app_id : "savings-together-e9667";
+  typeof __app_id !== "undefined"
+    ? __app_id
+    : "savings-together-e9667";
 
 // --- THEME CONFIG (IG Style) ---
 const theme = {
@@ -123,7 +128,7 @@ export default function App() {
   const [newYearInput, setNewYearInput] = useState("");
   const [allUsersData, setAllUsersData] = useState([]);
 
-  // --- Listeners (修復：加入超時強制載入機制) ---
+  // --- Listeners ---
   useEffect(() => {
     let mounted = true;
 
@@ -189,6 +194,7 @@ export default function App() {
                 try {
                   const docSnap = await getDoc(userRef);
                   const oldData = docSnap.data();
+                  // 檢查是否有舊資料需要遷移
                   if (
                     oldData &&
                     oldData.savedDays &&
@@ -201,6 +207,7 @@ export default function App() {
                     });
                     await updateDoc(userRef, { savedDays: [] });
                   } else {
+                    // 新用戶預設存錢桶
                     const currentYear = new Date().getFullYear();
                     await addDoc(jarsRef, {
                       name: `${currentYear}存錢桶`,
@@ -213,8 +220,11 @@ export default function App() {
                 }
               } else {
                 setMyJars(jars);
+                // 如果目前選中的存錢桶不存在（例如剛被刪除），則選第一個
                 if (!activeJarId || !jars.find((j) => j.id === activeJarId)) {
-                  setActiveJarId(jars[0]?.id);
+                  if (jars.length > 0) {
+                    setActiveJarId(jars[0].id);
+                  }
                 }
               }
             },
@@ -229,7 +239,7 @@ export default function App() {
       } finally {
         if (mounted) {
           setLoading(false);
-          clearTimeout(safetyTimer); // 清除計時器
+          clearTimeout(safetyTimer);
         }
       }
     });
@@ -239,7 +249,7 @@ export default function App() {
       unsubscribeAuth();
       clearTimeout(safetyTimer);
     };
-  }, []); // 移除 loading 依賴，避免迴圈
+  }, []); // 移除 loading 依賴
 
   // Sync Local State
   useEffect(() => {
@@ -340,7 +350,7 @@ export default function App() {
           role: usersSnap.empty ? "admin" : "member",
           joinedAt: new Date().toISOString(),
           totalWealth: 0,
-          totalDays: 0, // Initialize days count
+          totalDays: 0,
         }
       );
       showNotification("註冊成功！");
@@ -406,9 +416,13 @@ export default function App() {
   };
 
   const deleteJar = async (jarId) => {
-    if (myJars.length <= 1)
-      return showNotification("至少要保留一個存錢桶喔", "error");
+    if (myJars.length <= 1) {
+      showNotification("至少要保留一個存錢桶喔", "error");
+      return;
+    }
+    
     if (!confirm("確定要刪除這個存錢桶嗎？")) return;
+    
     try {
       await deleteDoc(
         doc(
@@ -423,10 +437,19 @@ export default function App() {
           jarId
         )
       );
-      updateUserStats(jarId); // Update stats after delete
+
+      // 2. 切換 activeJarId 到其他存錢桶 (避免 UI 錯誤)
+      const remainingJars = myJars.filter(jar => jar.id !== jarId);
+      if (remainingJars.length > 0) {
+        setActiveJarId(remainingJars[0].id);
+      }
+
+      await updateUserStats(jarId); 
+      
       showNotification("存錢桶已刪除");
     } catch (e) {
-      showNotification("刪除失敗", "error");
+      console.error("Delete Error:", e);
+      showNotification("刪除失敗，請檢查網路", "error");
     }
   };
 
@@ -495,12 +518,14 @@ export default function App() {
   const updateUserStats = async (deletedJarId = null) => {
     let newTotalWealth = 0;
     let newTotalDays = 0;
+    
     myJars.forEach((jar) => {
       if (jar.id !== deletedJarId) {
         newTotalWealth += jar.savedDays.reduce((a, b) => a + b, 0);
         newTotalDays += jar.savedDays.length;
       }
     });
+
     const userRef = doc(
       db,
       "artifacts",
