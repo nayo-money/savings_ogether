@@ -47,20 +47,31 @@ import {
 } from "lucide-react";
 
 // ==========================================
-// 🟢 Savings Together 設定
+// 🟢 Savings Together 設定 (安全讀取環境變數)
 // ==========================================
-// 修正：在瀏覽器環境直接使用字串，避免 process is not defined 錯誤
-// 若要使用環境變數，請確保你的建置工具 (如 webpack, vite) 有正確設定
-const firebaseConfig = {
-  apiKey: "AIzaSyDQUadbp5fnScsgnsiNH4X0ztjyUBx31zU",
-  authDomain: "savings-together-e9667.firebaseapp.com",
-  projectId: "savings-together-e9667",
-  storageBucket: "savings-together-e9667.firebasestorage.app",
-  messagingSenderId: "784947166662",
-  appId: "1:784947166662:web:492b10d3bba752568306c7",
+// 使用 helper function 避免在沒設定環境變數時發生 "process is not defined" 錯誤
+const getEnv = (key) => {
+  try {
+    return process.env[key];
+  } catch (e) {
+    return ""; // 如果 process 不存在，回傳空字串，避免崩潰
+  }
 };
 
-const app = initializeApp(firebaseConfig);
+const firebaseConfig = {
+  apiKey: getEnv("REACT_APP_FIREBASE_API_KEY"),
+  authDomain: getEnv("REACT_APP_FIREBASE_AUTH_DOMAIN"),
+  projectId: getEnv("REACT_APP_FIREBASE_PROJECT_ID"),
+  storageBucket: getEnv("REACT_APP_FIREBASE_STORAGE_BUCKET"),
+  messagingSenderId: getEnv("REACT_APP_FIREBASE_MESSAGING_SENDER_ID"),
+  appId: getEnv("REACT_APP_FIREBASE_APP_ID"),
+};
+
+// 初始化 Firebase
+// 如果沒有讀取到 Config (例如本地未設定 .env)，給予空物件避免初始化錯誤
+const app = initializeApp(
+  firebaseConfig.apiKey ? firebaseConfig : { apiKey: "", projectId: "" }
+);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
@@ -68,7 +79,7 @@ const db = getFirestore(app);
 const appId =
   typeof __app_id !== "undefined"
     ? __app_id
-    : "savings-together-e9667";
+    : getEnv("REACT_APP_FIREBASE_PROJECT_ID") || "savings-together-e9667";
 
 // --- THEME CONFIG (IG Style) ---
 const theme = {
@@ -132,10 +143,10 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
 
-    // ⏳ 安全機制：如果 3 秒內 Firebase 沒回應，強制結束 Loading 狀態
+    // ⏳ 安全機制
     const safetyTimer = setTimeout(() => {
       if (mounted && loading) {
-        console.warn("Firebase 連線較慢，強制顯示介面");
+        console.warn("Firebase 連線較慢或 API Key 未設定");
         setLoading(false);
       }
     }, 3000);
@@ -190,11 +201,10 @@ export default function App() {
               }));
 
               if (jars.length === 0) {
-                // 初始化：如果沒有存錢桶，建立預設的
+                // 初始化
                 try {
                   const docSnap = await getDoc(userRef);
                   const oldData = docSnap.data();
-                  // 檢查是否有舊資料需要遷移
                   if (
                     oldData &&
                     oldData.savedDays &&
@@ -207,7 +217,6 @@ export default function App() {
                     });
                     await updateDoc(userRef, { savedDays: [] });
                   } else {
-                    // 新用戶預設存錢桶
                     const currentYear = new Date().getFullYear();
                     await addDoc(jarsRef, {
                       name: `${currentYear}存錢桶`,
@@ -220,11 +229,9 @@ export default function App() {
                 }
               } else {
                 setMyJars(jars);
-                // 如果目前選中的存錢桶不存在（例如剛被刪除），則選第一個
+                // 邏輯修正：如果 activeJarId 無效（例如剛被刪除），自動切換到第一個存錢桶
                 if (!activeJarId || !jars.find((j) => j.id === activeJarId)) {
-                  if (jars.length > 0) {
-                    setActiveJarId(jars[0].id);
-                  }
+                  if (jars.length > 0) setActiveJarId(jars[0].id);
                 }
               }
             },
@@ -249,7 +256,7 @@ export default function App() {
       unsubscribeAuth();
       clearTimeout(safetyTimer);
     };
-  }, []); // 移除 loading 依賴
+  }, []);
 
   // Sync Local State
   useEffect(() => {
@@ -415,6 +422,7 @@ export default function App() {
     }
   };
 
+  // 修正：確保刪除後正確更新統計數據與 UI
   const deleteJar = async (jarId) => {
     if (myJars.length <= 1) {
       showNotification("至少要保留一個存錢桶喔", "error");
@@ -424,6 +432,7 @@ export default function App() {
     if (!confirm("確定要刪除這個存錢桶嗎？")) return;
     
     try {
+      // 1. 刪除資料庫中的文件
       await deleteDoc(
         doc(
           db,
@@ -438,14 +447,16 @@ export default function App() {
         )
       );
 
-      // 2. 切換 activeJarId 到其他存錢桶 (避免 UI 錯誤)
+      // 2. 更新使用者統計數據 (傳入已刪除的 ID 以便在計算時排除)
+      await updateUserStats(jarId); 
+      
+      // 3. UI 狀態更新 (切換到其他存錢桶)
+      // 注意：這裡先做切換，雖然 Listener 稍後會自動同步，但這樣可以讓體驗更流暢
       const remainingJars = myJars.filter(jar => jar.id !== jarId);
       if (remainingJars.length > 0) {
         setActiveJarId(remainingJars[0].id);
       }
 
-      await updateUserStats(jarId); 
-      
       showNotification("存錢桶已刪除");
     } catch (e) {
       console.error("Delete Error:", e);
@@ -484,10 +495,11 @@ export default function App() {
       );
       await updateDoc(jarRef, { savedDays: localSavedDays });
 
-      // Update User Stats (Wealth AND Days)
+      // 更新統計
       let newTotalWealth = 0;
       let newTotalDays = 0;
       myJars.forEach((jar) => {
+        // 如果是目前正在編輯的存錢桶，使用最新的本地狀態
         const days = jar.id === activeJarId ? localSavedDays : jar.savedDays;
         newTotalWealth += days.reduce((a, b) => a + b, 0);
         newTotalDays += days.length;
@@ -514,11 +526,12 @@ export default function App() {
     }
   };
 
-  // Helper to update stats when a jar is deleted or changed
+  // Helper function: 計算並更新總資產 (排除特定的 Jar ID)
   const updateUserStats = async (deletedJarId = null) => {
     let newTotalWealth = 0;
     let newTotalDays = 0;
     
+    // 遍歷目前的存錢桶列表 (myJars 還是舊的狀態，所以要手動過濾)
     myJars.forEach((jar) => {
       if (jar.id !== deletedJarId) {
         newTotalWealth += jar.savedDays.reduce((a, b) => a + b, 0);
