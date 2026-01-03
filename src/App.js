@@ -428,9 +428,9 @@ export default function App() {
       showNotification("至少要保留一個存錢桶喔", "error");
       return;
     }
-    
+
     if (!confirm("確定要刪除這個存錢桶嗎？")) return;
-    
+
     try {
       // 1. 刪除資料庫中的文件
       await deleteDoc(
@@ -448,11 +448,11 @@ export default function App() {
       );
 
       // 2. 更新使用者統計數據 (傳入已刪除的 ID 以便在計算時排除)
-      await updateUserStats(jarId); 
-      
+      await updateUserStats(jarId);
+
       // 3. UI 狀態更新 (切換到其他存錢桶)
       // 注意：這裡先做切換，雖然 Listener 稍後會自動同步，但這樣可以讓體驗更流暢
-      const remainingJars = myJars.filter(jar => jar.id !== jarId);
+      const remainingJars = myJars.filter((jar) => jar.id !== jarId);
       if (remainingJars.length > 0) {
         setActiveJarId(remainingJars[0].id);
       }
@@ -530,7 +530,7 @@ export default function App() {
   const updateUserStats = async (deletedJarId = null) => {
     let newTotalWealth = 0;
     let newTotalDays = 0;
-    
+
     // 遍歷目前的存錢桶列表 (myJars 還是舊的狀態，所以要手動過濾)
     myJars.forEach((jar) => {
       if (jar.id !== deletedJarId) {
