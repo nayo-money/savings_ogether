@@ -229,7 +229,6 @@ export default function App() {
                 }
               } else {
                 setMyJars(jars);
-                // 邏輯修正：如果 activeJarId 無效（例如剛被刪除），自動切換到第一個存錢桶
                 if (!activeJarId || !jars.find((j) => j.id === activeJarId)) {
                   if (jars.length > 0) setActiveJarId(jars[0].id);
                 }
@@ -422,17 +421,15 @@ export default function App() {
     }
   };
 
-  // 修正：確保刪除後正確更新統計數據與 UI
   const deleteJar = async (jarId) => {
     if (myJars.length <= 1) {
       showNotification("至少要保留一個存錢桶喔", "error");
       return;
     }
-
+    
     if (!confirm("確定要刪除這個存錢桶嗎？")) return;
-
+    
     try {
-      // 1. 刪除資料庫中的文件
       await deleteDoc(
         doc(
           db,
@@ -447,16 +444,13 @@ export default function App() {
         )
       );
 
-      // 2. 更新使用者統計數據 (傳入已刪除的 ID 以便在計算時排除)
-      await updateUserStats(jarId);
-
-      // 3. UI 狀態更新 (切換到其他存錢桶)
-      // 注意：這裡先做切換，雖然 Listener 稍後會自動同步，但這樣可以讓體驗更流暢
-      const remainingJars = myJars.filter((jar) => jar.id !== jarId);
+      const remainingJars = myJars.filter(jar => jar.id !== jarId);
       if (remainingJars.length > 0) {
         setActiveJarId(remainingJars[0].id);
       }
 
+      await updateUserStats(jarId); 
+      
       showNotification("存錢桶已刪除");
     } catch (e) {
       console.error("Delete Error:", e);
@@ -495,11 +489,9 @@ export default function App() {
       );
       await updateDoc(jarRef, { savedDays: localSavedDays });
 
-      // 更新統計
       let newTotalWealth = 0;
       let newTotalDays = 0;
       myJars.forEach((jar) => {
-        // 如果是目前正在編輯的存錢桶，使用最新的本地狀態
         const days = jar.id === activeJarId ? localSavedDays : jar.savedDays;
         newTotalWealth += days.reduce((a, b) => a + b, 0);
         newTotalDays += days.length;
@@ -526,12 +518,10 @@ export default function App() {
     }
   };
 
-  // Helper function: 計算並更新總資產 (排除特定的 Jar ID)
   const updateUserStats = async (deletedJarId = null) => {
     let newTotalWealth = 0;
     let newTotalDays = 0;
-
-    // 遍歷目前的存錢桶列表 (myJars 還是舊的狀態，所以要手動過濾)
+    
     myJars.forEach((jar) => {
       if (jar.id !== deletedJarId) {
         newTotalWealth += jar.savedDays.reduce((a, b) => a + b, 0);
@@ -599,7 +589,7 @@ export default function App() {
     return { wealth, days };
   }, [myJars, localSavedDays, activeJarId]);
 
-  // Leaderboard Sorted by Total Days
+  // Leaderboard Sorted by Total Days, then Wealth
   const leaderboard = useMemo(() => {
     return allUsersData
       .map((u) => ({
@@ -607,11 +597,16 @@ export default function App() {
         total: u.totalWealth || 0,
         days: u.totalDays || 0,
       }))
-      .sort((a, b) => b.days - a.days); // Sort by days descending
+      .sort((a, b) => {
+        // 先比格子數 (天數)
+        const daysDiff = b.days - a.days;
+        if (daysDiff !== 0) return daysDiff;
+        // 如果格子數一樣，比總金額
+        return b.total - a.total;
+      });
   }, [allUsersData]);
 
   // --- Render ---
-  // Ensure styles loaded
   if (loading) {
     return (
       <div
@@ -1069,10 +1064,11 @@ export default function App() {
                       >
                         {stat.nickname}
                       </div>
-                      {stat.role === "admin" && (
+                      {/* 第一名顯示皇冠 */}
+                      {idx === 0 && (
                         <Crown
-                          size={10}
-                          className="fill-[#C5A880] text-[#C5A880]"
+                          size={14}
+                          className="fill-yellow-400 text-yellow-500 ml-1"
                         />
                       )}
                     </div>
